@@ -1,0 +1,14 @@
+dqJob: dq-quality-prod
+database: pagopa_qa
+dlLayer: silver
+contracts:
+  repository: pagopa/pdnd-data-contracts
+  ref: main
+schedule: "0 4 * * *"
+pool: dq-quality
+watermarkColumn: dl_event_tms
+sodaCloudEnabled: false
+primaryKeys:
+  payments: [dl_id]
+  transfers: [dl_id]
+xrefDatasets: {}

@@ -1,0 +1,10 @@
+name: test
+
+databases:
+  data: pagopa_dev
+  inputs: pagopa
+
+dags:
+  schedulePaused: true
+
+credentials: []

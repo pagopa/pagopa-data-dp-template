@@ -1,0 +1,24 @@
+name: dp-demo-blueprint
+domain: demo
+version: 0.1.0
+description: Data product di esempio della blueprint
+owner: "@pagopa/pagopa-team-qa"
+status: draft
+
+modules:
+  data: true
+  quality: true
+
+inputPorts:
+  - name: raw_payments
+    dataContractPath: src/data/pagopa/demo/dc-demo-raw-payments.yaml
+  - name: raw_transfers
+    dataContractPath: src/data/pagopa/demo/dc-demo-raw-transfers.yaml
+
+outputPorts:
+  - name: payments
+    dataContractPath: src/data/pagopa/demo/dc-demo-payments.yaml
+  - name: transfers
+    dataContractPath: src/data/pagopa/demo/dc-demo-transfers.yaml
+
+observabilityPorts: []

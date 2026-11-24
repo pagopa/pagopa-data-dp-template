@@ -1,0 +1,52 @@
+name: CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Ambiente di destinazione
+        type: choice
+        required: true
+        default: test
+        options:
+          - test
+          - prod
+
+jobs:
+  deploy:
+    runs-on:
+      - codebuild-${{ vars.CODEBUILD_RUNNER_PROJECT }}-${{ github.run_id }}-${{ github.run_attempt }}
+    environment: ${{ inputs.env }}
+    concurrency: deploy-${{ inputs.env }}
+    env:
+      CDE_VCLUSTER_ENDPOINT: ${{ secrets.CDE_CLUSTER_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepara venv e CLI cde
+        run: |
+          python3 -m venv .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install pyyaml build
+          if ! command -v cde >/dev/null 2>&1; then
+            curl -fL --max-time 60 -o /usr/local/bin/cde "${{ vars.CDE_CLI_DOWNLOAD_URL }}"
+            chmod +x /usr/local/bin/cde
+          fi
+          cde --version
+
+      - name: Configura le credenziali CDP
+        env:
+          CDP_ACCESS_KEY_ID: ${{ secrets.CDP_ACCESS_KEY_ID }}
+          CDP_PRIVATE_KEY: ${{ secrets.CDP_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.cdp
+          printf '[default]\ncdp_access_key_id = %s\ncdp_private_key = %s\n' \
+            "$CDP_ACCESS_KEY_ID" "$CDP_PRIVATE_KEY" > ~/.cdp/credentials
+
+      - name: Plan
+        run: make plan ENV=${{ inputs.env }}
+
+      - name: Deploy
+        run: make deploy ENV=${{ inputs.env }}

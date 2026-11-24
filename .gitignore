@@ -1,0 +1,35 @@
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# PySpark local
+derby.log
+metastore_db/
+spark-warehouse/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Env / secrets
+.env
+.cache_ggshield
+/credentials
+
+# CLI di CDE, finché make cde-setup non la installa
+/cde
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,2 @@
+# LF anche su Windows: con CRLF bash e make leggono il \r come parte del comando.
+* text=auto eol=lf

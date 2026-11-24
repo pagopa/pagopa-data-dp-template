@@ -1,0 +1,27 @@
+{
+    "name": "Data product",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "..",
+        "args": {
+            "CDE_CLI_DOWNLOAD_URL": "${localEnv:CDE_CLI_DOWNLOAD_URL}"
+        }
+    },
+    "features": {
+        "ghcr.io/devcontainers/features/git:1": {}
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "ms-azuretools.vscode-docker",
+                "njpwerner.autodocstring",
+                "charliermarsh.ruff",
+                "redhat.vscode-yaml"
+            ]
+        }
+    },
+    "remoteUser": "root",
+    "postCreateCommand": "make install"
+}

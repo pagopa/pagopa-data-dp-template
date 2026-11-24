@@ -1,0 +1,10 @@
+name: prod
+
+databases:
+  data: pagopa
+  inputs: pagopa
+
+dags:
+  schedulePaused: false
+
+credentials: []
