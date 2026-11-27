@@ -302,14 +302,17 @@ def connection() -> bool:
 
 def prerequisites(env: str) -> list[tuple[str, ...]]:
     ctx = render.context(env)
-    credentials = ctx["env"]["credentials"]
-    wanted = [("credential", name, f"workload credential {name}", ONCE_PER_ENV) for name in credentials]
+    # Le credential di envs/<env>.yaml e quelle che un job dichiara da sé, come il SAS token del job export.
+    credentials, resources = list(ctx["env"]["credentials"]), []
     wheels = {job: f"{job}.whl" for job in render.jobs()}
     for path in render.deployable_files():
         if path.parent.name == "cde_cfg":
-            resource = yaml.safe_load(render.render_file(path, env, wheels)).get("pythonEnvResource")
-            if resource:
-                wanted.append(("resource", resource, f"resource python-env {resource}", ONCE_PER_ENV))
+            spec = yaml.safe_load(render.render_file(path, env, wheels))
+            credentials += [name for name in spec.get("workloadCredentials") or [] if name not in credentials]
+            if spec.get("pythonEnvResource"):
+                resources.append(spec["pythonEnvResource"])
+    wanted = [("credential", name, f"workload credential {name}", ONCE_PER_ENV) for name in credentials]
+    wanted += [("resource", name, f"resource python-env {name}", ONCE_PER_ENV) for name in resources]
     if "quality" in ctx:
         job = ctx["quality"]["dqJob"]
         hint = "lo deploya il dq-framework: senza, la quality fallisce"
@@ -324,6 +327,10 @@ def prerequisites(env: str) -> list[tuple[str, ...]]:
     if "quality" in ctx and ctx["quality"]["pool"] != "default_pool":
         hint = "in Airflow, Admin e Pools; se non si può creare, default_pool in quality/config/<env>.yaml"
         checks.append((CHECK, f"pool Airflow {ctx['quality']['pool']} con uno slot", hint))
+    if "export" in ctx["env"]:
+        export = ctx["env"]["export"]
+        hint = f"su Azure, con il SAS token di {export['credential']} che permette di scriverci"
+        checks.append((CHECK, f"container {export['container']} nello storage account {export['account']}", hint))
     return checks or [(OK, "niente da controllare")]
 
 

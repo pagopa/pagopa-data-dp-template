@@ -26,4 +26,4 @@ with DAG(
     default_args={"owner": "${dp.owner}", "retries": 1, "retry_delay": timedelta(minutes=10)},
     tags=["data-product", DP_NAME, DOMAIN],
 ) as dag:
-    job("ingestion") >> job("deduplication")
+    job("ingestion") >> job("deduplication") >> job("export")

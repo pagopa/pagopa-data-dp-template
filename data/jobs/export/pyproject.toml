@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "export"
+version = "0.1.0"
+description = "Job del data product: esporta tabelle su Azure Blob Storage"
+requires-python = ">=3.10"
+dependencies = [
+    "pyspark==3.5.4",  # la versione Spark del vcluster CDE
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+]
+
+[project.scripts]
+run-export = "export.entrypoints.run_export:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

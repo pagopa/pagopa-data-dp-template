@@ -5,7 +5,8 @@ export
 
 ENV ?= dev
 JOBS := $(sort $(patsubst %/,%,$(wildcard data/jobs/*/)))
-FIRST_JOB := $(notdir $(firstword $(JOBS)))
+# Il primo job, di default per JOB e FROM: non il job export, che ha argomenti suoi, a meno che sia l'unico.
+FIRST_JOB := $(notdir $(firstword $(filter-out data/jobs/export,$(JOBS)) $(JOBS)))
 JOB ?= $(FIRST_JOB)
 FROM ?= $(FIRST_JOB)
 ARGS ?=

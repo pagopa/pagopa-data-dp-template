@@ -8,3 +8,9 @@ dags:
   schedulePaused: true
 
 credentials: []
+
+# Dove il job export carica i Parquet: test e prod non scrivono mai nello stesso container.
+export:
+  account: pagopauitnqadqfsa
+  container: dp-export-test
+  credential: dqf-blob-sas

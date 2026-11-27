@@ -7,12 +7,12 @@ TODO: descrizione del data product in una riga.
 Questo repo è la blueprint dei data product della piattaforma dati PagoPa su CDE, ed è già un data product funzionante: `dp-demo-blueprint`. Un nuovo data product nasce copiandolo: niente template, i file sono quelli veri, e `make setup` li adatta una volta sola. Un data product corrisponde a uno use case: i job che lo alimentano, le tabelle che espone e la loro quality, anche su più layer del Data Lake.
 
 1. Crea il repo `dp-<dominio>-<use-case>` da questo, con "Use this template" su GitHub, e aprilo nel Dev Container.
-2. Lancia `make setup`. Chiede dominio, use case, descrizione, owner e moduli; per i moduli scelti, il nome del primo job e se deve leggere le input port con Spark, e il layer della quality e il branch dei contratti da cui legge i check; poi le porte, una alla volta con il loro contratto: un'input port ha il nome della tabella che legge. Dove c'è un default lo mostra fra parentesi quadre, e invio lo accetta. Dopo la conferma sostituisce l'esempio con il tuo data product: descrittore, `CODEOWNERS`, questo README, il primo job al posto dei due di esempio, il DAG, una DDL scheletro per ogni output port e la configurazione della quality.
+2. Lancia `make setup`. Chiede dominio, use case, descrizione, owner e moduli; per i moduli scelti, il nome del primo job, se deve leggere le input port con Spark e se tenere il job export, e il layer della quality e il branch dei contratti da cui legge i check; poi le porte, una alla volta con il loro contratto: un'input port ha il nome della tabella che legge. Dove c'è un default lo mostra fra parentesi quadre, e invio lo accetta. Dopo la conferma sostituisce l'esempio con il tuo data product: descrittore, `CODEOWNERS`, questo README, il primo job al posto dei due di esempio, il DAG, una DDL scheletro per ogni output port e la configurazione della quality.
 3. Leggi l'elenco dei file che ha modificato, creato o cancellato, e segui i prossimi passi che stampa alla fine: li ripete in ogni momento `make help`, o `make` da solo.
 
 Finché non lo committi, il setup si rifà rilanciando `make setup`: mostra le modifiche non committate, chiede conferma, le annulla con git e riparte dalla blueprint. Per questo, la prima volta, non vuole modifiche non committate.
 
-Le risposte si possono passare anche come variabili, e quelle passate non vengono chieste: `make setup DOMAIN=gpd USE_CASE=kpi OWNER=@pagopa/team-kpi`. Le variabili sono `DOMAIN`, `USE_CASE`, `DESCRIPTION`, `OWNER`, `MODULES` (`data`, `quality` o `data,quality`), `JOB`, `SPARK` (`s` perché il primo job apra una SparkSession, legga le tabelle delle input port e le stampi, `n` per lo scheletro senza Spark; di default `s`), `QUALITY_LAYER` (il `dlLayer` della quality, nel nome delle sue tabelle, di default `silver`), `CONTRACTS_REF` (il branch dei contratti da cui la quality legge i check, in test e in prod, di default `main`; va bene anche un tag o un commit), `INPUTS` e `OUTPUTS`, con le porte separate da virgola, come `nome` o `nome=<path del contratto>`. Con `YES=1` non chiede nulla: quello che manca prende il default, e senza default va passato come variabile. Per esempio basta `make setup DOMAIN=gpd USE_CASE=kpi DESCRIPTION="KPI giornalieri" OWNER=@pagopa/team-kpi OUTPUTS=kpi_positions YES=1`.
+Le risposte si possono passare anche come variabili, e quelle passate non vengono chieste: `make setup DOMAIN=gpd USE_CASE=kpi OWNER=@pagopa/team-kpi`. Le variabili sono `DOMAIN`, `USE_CASE`, `DESCRIPTION`, `OWNER`, `MODULES` (`data`, `quality` o `data,quality`), `JOB`, `SPARK` (`s` perché il primo job apra una SparkSession, legga le tabelle delle input port e le stampi, `n` per lo scheletro senza Spark; di default `s`), `EXPORT` (`s` per tenere il job export, che copia le output port su Azure Blob Storage; di default `n`), `QUALITY_LAYER` (il `dlLayer` della quality, nel nome delle sue tabelle, di default `silver`), `CONTRACTS_REF` (il branch dei contratti da cui la quality legge i check, in test e in prod, di default `main`; va bene anche un tag o un commit), `INPUTS` e `OUTPUTS`, con le porte separate da virgola, come `nome` o `nome=<path del contratto>`. Con `YES=1` non chiede nulla: quello che manca prende il default, e senza default va passato come variabile. Per esempio basta `make setup DOMAIN=gpd USE_CASE=kpi DESCRIPTION="KPI giornalieri" OWNER=@pagopa/team-kpi OUTPUTS=kpi_positions YES=1`.
 
 Le modifiche successive della blueprint non arrivano da sole nei data product già creati: vanno riportate a mano.
 
@@ -39,14 +39,15 @@ I file deployabili possono leggere il descrittore con i segnaposto `${dp.*}`: il
 
 ## L'esempio
 
-Il data product di esempio legge due tabelle, le input port `raw_payments` e `raw_transfers`, ed espone le due tabelle silver che ne ricava, le output port `payments` e `transfers`. Lo fanno due job, in sequenza nello stesso DAG (`data/dags/dag_pipeline.py`):
+Il data product di esempio legge due tabelle, le input port `raw_payments` e `raw_transfers`, ed espone le due tabelle silver che ne ricava, le output port `payments` e `transfers`. Lo fanno due job, e un terzo copia le tabelle silver su Azure; girano in sequenza nello stesso DAG (`data/dags/dag_pipeline.py`):
 
 | Job | Legge | Scrive |
 |---|---|---|
 | `ingestion` | le tabelle delle input port | `bronze_demo_payments`, `bronze_demo_transfers` |
 | `deduplication` | le tabelle bronze | `silver_demo_payments`, `silver_demo_transfers` |
+| `export` | le tabelle silver | un Parquet per tabella su Azure Blob Storage (vedi [Il job export](#il-job-export)) |
 
-Le tabelle bronze restano interne al data product: non sono output port, quindi il descrittore non le elenca e la quality non le misura. Le DDL di tutte e quattro sono in `data/ddl/tables/`. I due job hanno lo stesso entrypoint di esempio, quello di un job nuovo: aprono una SparkSession, leggono le tabelle delle input port e le stampano. La logica vera è un `TODO`.
+Le tabelle bronze restano interne al data product: non sono output port, quindi il descrittore non le elenca e la quality non le misura. Le DDL di tutte e quattro sono in `data/ddl/tables/`. `ingestion` e `deduplication` hanno lo stesso entrypoint di esempio, quello di un job nuovo: aprono una SparkSession, leggono le tabelle delle input port e le stampano. La logica vera è un `TODO`.
 
 ## Struttura
 
@@ -92,10 +93,11 @@ Le tabelle bronze restano interne al data product: non sono output port, quindi 
 |---|---|
 | la logica di un job | `data/jobs/<job>/src/<job>/entrypoints/`, con i test in `data/jobs/<job>/tests/`. L'entrypoint riceve gli stessi parametri in ogni job: `--database`, dove scrive, `--input-database`, dove legge le input port, e `--from` e `--to`, l'intervallo da elaborare. Nell'esempio con Spark apre una SparkSession e stampa le tabelle delle input port da `--input-database`, o senza, come in locale, l'elenco dei database: va sostituito con la logica vera. Le tabelle sono in `INPUT_TABLES`, che `make setup` e `make new-job` riempiono con le input port di `data-product.yaml`, che hanno il nome della loro tabella. Il job deve essere rieseguibile sullo stesso intervallo senza duplicare dati, perché i backfill passano da lì |
 | un parametro che cambia per ambiente | un campo dell'`AppConfig` in `src/<job>/common/config/`. Se il valore sta già in `envs/`, come i database, passalo come argomento nella definizione del job: `--database=${env.databases.data}` |
-| un nuovo job | `make new-job JOB=<job>`: crea il job con il codice di esempio, con o senza Spark (lo chiede, oppure `SPARK=s` o `SPARK=n`), e lo installa. Da un job esistente, di default il primo di `data/jobs/` (oppure `FROM=<job>`), copia solo la struttura: configurazione, logging, definizione su CDE e `pyproject.toml`, con il nome sostituito. Il suo codice, i suoi test e il suo `requirements.txt` no. Poi aggiungi `job("<job>")` nel DAG |
+| un nuovo job | `make new-job JOB=<job>`: crea il job con il codice di esempio, con o senza Spark (lo chiede, oppure `SPARK=s` o `SPARK=n`), e lo installa. Da un job esistente, di default il primo di `data/jobs/` che non sia `export` (oppure `FROM=<job>`), copia solo la struttura: configurazione, logging, definizione su CDE e `pyproject.toml`, con il nome sostituito. Il suo codice, i suoi test e il suo `requirements.txt` no. Poi aggiungi `job("<job>")` nel DAG |
 | librerie che il runtime Spark di CDE non ha | `data/jobs/<job>/requirements.txt`, senza pyspark: il deploy crea la python-env del job e gliela collega, `make install` le installa in locale (vedi [Python-env di un job](#python-env-di-un-job)) |
 | una tabella esposta | `make new-port PORT=<nome>`: aggiunge l'output port a `data-product.yaml`, con il path del contratto della convenzione o `CONTRACT=<path>`, e con il Modulo Dati crea la DDL scheletro come migrazione successiva. Con `INPUT=1` aggiunge invece una tabella da leggere, e `PORT` è il nome della tabella. Riscrive `data-product.yaml` nel suo formato standard |
 | il monitoraggio | `make new-observability-port TYPE=superset URL=<url>` per una dashboard Superset, o `TYPE=sodacloud DATASETS=<dataset>=<url>,...` per i dataset su Soda Cloud: aggiunge a `data-product.yaml` un'observability port che si chiama come il tipo, o `PORT=<nome>`. Chiede quello che manca, i dataset uno alla volta |
+| una tabella da copiare su Azure | una voce in `TABLES` del job `export`, come spiega [Il job export](#il-job-export) |
 | una modifica di schema | una nuova migrazione, mai la modifica di una già applicata. Deve restare compatibile con la versione del job in esecuzione durante il deploy |
 | una vista | un file in `data/ddl/views/` con `CREATE OR REPLACE VIEW ${env.databases.data}.<nome> AS ...` |
 | l'orchestrazione | `data/dags/dag_pipeline.py`, un task per job con `job("<job>")`: job in sequenza nello stesso DAG, per esempio `job("ingestion") >> job("deduplication")`, e schedule indipendenti in DAG separati. Con Airflow installato, un test controlla che la pipeline lanci tutti e soli i job di `data/jobs/` |
@@ -110,6 +112,24 @@ Nella configurazione vanno i parametri del codice. I valori dell'infrastruttura,
 
 `setup_logging` usa il `log_level` della configurazione, ma la variabile `LOG_LEVEL`, per esempio nel `.env`, ha la precedenza. `py4j` resta a `WARNING`, perché in debug riempirebbe il log. Ogni modulo prende il suo logger con `logging.getLogger(__name__)`. Lo smoke test di ogni job lancia l'entrypoint in tutti e tre gli ambienti e controlla che in `dev` non scriva. Con l'esempio Spark usa una SparkSession finta: i test non avviano Spark, che vuole Java, e girano anche in CI.
 
+### Il job export
+
+Il job `export` copia su Azure Blob Storage le tabelle elencate in `TABLES`, nel suo entrypoint, nello stesso formato in cui il dq-framework esporta le sue tabelle di risultati: un Parquet con tutto il contenuto della tabella, caricato con un SAS token.
+
+```text
+<container>/<name>/<tabella>.parquet                      di default
+<container>/<name>/<tabella>/<colonna>=<valore>.parquet   con una colonna in TABLES, un Parquet per ogni suo valore
+```
+
+È un job come gli altri, in coda alla pipeline: `job("deduplication") >> job("export")` nell'esempio, così parte appena i dati sono aggiornati. Legge le tabelle da `--database`, e ogni run riscrive i blob con tutta la tabella: rilanciarlo non duplica nulla, e `--from` e `--to` non servono. Una tabella che fallisce non ferma le altre, ma alla fine il job esce con errore. In `dev` prepara i Parquet senza caricarli.
+
+- **Dove carica**: nella sezione `export` di `envs/<env>.yaml`, `account`, `container` e `credential`, la workload credential con il SAS token nel file `sas_token`. Il job monta solo quella e la legge da `/etc/dex/secrets/<credential>/sas_token`. Test e prod non scrivono mai nello stesso container, e un test lo controlla.
+- **Cosa carica**: `TABLES`, che `make setup` riempie con le output port. Le colonne esportabili sono di tipo semplice: stringhe, numeri, decimali, booleani, date, timestamp e binari; una colonna array, map o struct fa fallire l'export della sua tabella.
+- **Limite**: ogni tabella passa per intero dal driver di Spark, quindi va bene per tabelle piccole e medie, come i risultati del dq-framework, non per quelle molto grandi. Per questo la definizione del job dà memoria al driver.
+- **Dipendenze**: `pyarrow`, in `requirements.txt`: la python-env la crea il deploy.
+
+Non è un modello per i job nuovi: `make new-job` non parte da `export`, che ha argomenti e credential suoi. Con `make setup` si tiene con `EXPORT=s`; senza, il setup cancella il job e la sezione `export` di `envs/`.
+
 ## Sviluppo
 
 Si lavora nel Dev Container, che alla creazione lancia `make install`. Il Makefile carica `.env` se esiste (vedi `.env.example`).
@@ -122,7 +142,7 @@ Si lavora nel Dev Container, che alla creazione lancia `make install`. Il Makefi
 | `make lint` | `ruff check .` |
 | `make test` | test di `dp-setup-utils/` (descrittore, moduli, segnaposto, DAG, deploy), poi quelli di ogni job |
 | `make run-dev JOB=ingestion ARGS="--from 2026-09-01"` | lancia il `launcher.py` di un job in locale, con `ENV=dev` |
-| `make new-job JOB=<job>` | un nuovo job con il codice di esempio, con o senza Spark (`SPARK=s` o `n`, altrimenti lo chiede), e la struttura di uno esistente (`FROM=<job>`, di default il primo di `data/jobs/`) |
+| `make new-job JOB=<job>` | un nuovo job con il codice di esempio, con o senza Spark (`SPARK=s` o `n`, altrimenti lo chiede), e la struttura di uno esistente (`FROM=<job>`, di default il primo di `data/jobs/` che non sia `export`) |
 | `make new-port PORT=<nome>` | una nuova output port con la sua DDL scheletro, o con `INPUT=1` una tabella da leggere |
 | `make new-observability-port` | un'observability port: una dashboard Superset (`TYPE=superset URL=<url>`) o i dataset su Soda Cloud, ognuno con il suo URL (`TYPE=sodacloud DATASETS=<dataset>=<url>,...`); quello che manca lo chiede |
 | `make build` | un wheel per job, in `dist/wheels/<job>/` |
@@ -188,14 +208,16 @@ I file `envs/<env>.yaml` hanno già i valori predefiniti, che un data product pu
 | `databases.inputs`, il database delle tabelle delle input port | `pagopa` | `pagopa` |
 | `dags.schedulePaused`, i DAG nascono in pausa | `true` | `false` |
 | `credentials`, le workload credential dei job | `[]` | `[]` |
+| `export`, dove il [job export](#il-job-export) carica i Parquet | container `dp-export-test` | container `dp-export` |
 
 Test e prod condividono vcluster e Data Lake: in test le tabelle del data product non vanno mai in `pagopa`, e un test controlla che i due ambienti scrivano in database diversi. I DAG di test nascono in pausa per non togliere capacità a prod. Il valore arriva al DAG come `is_paused_upon_creation`, perché per i job Airflow la CLI di CDE non accetta opzioni di schedule, e Airflow lo usa solo la prima volta che vede il DAG. Un run lanciato a mano su un DAG in pausa resta in coda: per provarlo togli la pausa dalla UI di Airflow, lancia il run e, se il DAG ha uno schedule, rimetti la pausa quando ha finito.
 
 ### Prerequisiti, una volta per ambiente
 
 - Con il Modulo Quality: il pool Airflow indicato in `pool` di `quality/config/<env>.yaml`, con un solo slot (va verificato che su CDE si possa creare; altrimenti `pool: default_pool` e schedule sfasati), e il job del dq-framework indicato in `dqJob`.
+- Con il job export: la workload credential indicata in `export.credential` di `envs/<env>.yaml`, con il SAS token nel file `sas_token`, e su Azure il container indicato in `export.container`, su cui il SAS deve permettere di scrivere.
 - Le workload credential elencate in `credentials` di `envs/<env>.yaml`, e le resource python-env che le definizioni dei job indicano con `pythonEnvResource`. Quelle dei job con un `requirements.txt` le crea il deploy.
-- Per deployare da locale: l'accesso configurato con `make cde-setup`, come spiega [Accesso a CDE da locale](#accesso-a-cde-da-locale), che controlla anche i prerequisiti qui sopra, tranne il pool Airflow, da verificare a mano.
+- Per deployare da locale: l'accesso configurato con `make cde-setup`, come spiega [Accesso a CDE da locale](#accesso-a-cde-da-locale), che controlla anche i prerequisiti qui sopra, tranne il pool Airflow e il container dell'export, da verificare a mano.
 - Per la CD: i GitHub Environments `test` e `prod` con i segreti `CDP_ACCESS_KEY_ID`, `CDP_PRIVATE_KEY` e `CDE_CLUSTER_URL` (anche a livello di organizzazione), e approvatori obbligatori su `prod`; le variabili `CODEBUILD_RUNNER_PROJECT` e `CDE_CLI_DOWNLOAD_URL`, a livello di repo o di organizzazione.
 
 ### Accesso a CDE da locale

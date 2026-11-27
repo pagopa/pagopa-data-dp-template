@@ -12,14 +12,15 @@ import render
 import setup
 import yaml
 
-pytestmark = pytest.mark.skipif(not render.jobs(), reason="data product senza Modulo Dati")
+MODELS = [job for job in render.jobs() if job != new_job.EXPORT_JOB]
+pytestmark = pytest.mark.skipif(not MODELS, reason="data product senza job da cui partire")
 DESCRIPTOR = yaml.safe_load((render.ROOT / "data-product.yaml").read_text(encoding="utf-8"))
 IS_BLUEPRINT = DESCRIPTOR["name"] == setup.BLUEPRINT
 
 
 @pytest.fixture
 def source():
-    return render.jobs()[0]
+    return MODELS[0]
 
 
 @pytest.fixture
@@ -66,6 +67,11 @@ def test_nomi_rifiutati(jobs_dir, source, name, error):
         new_job.new_job(name, source, jobs_dir)
 
 
+def test_il_job_export_non_e_un_modello(jobs_dir):
+    with pytest.raises(ValueError, match="job di export"):
+        new_job.new_job("nuovo_job", new_job.EXPORT_JOB, jobs_dir)
+
+
 def test_job_esistente(jobs_dir, source):
     with pytest.raises(ValueError, match="già un job"):
         new_job.new_job(source, source, jobs_dir)
@@ -79,7 +85,7 @@ def test_si_o_no():
 
 @pytest.mark.skipif(not IS_BLUEPRINT, reason="solo nella blueprint: nei data product il codice dei job è dell'utente")
 def test_esempi_della_blueprint_uguali_a_un_job_nuovo():
-    for job in render.jobs():
+    for job in MODELS:
         folder = render.ROOT / "data" / "jobs" / job
         entrypoint = folder / "src" / job / "entrypoints" / f"run_{job}.py"
         expected = new_job.entrypoint(job, spark=True, inputs=new_job.input_ports(render.ROOT))

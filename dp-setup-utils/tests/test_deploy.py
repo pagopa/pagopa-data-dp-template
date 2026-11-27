@@ -31,6 +31,17 @@ def test_database_distinti_per_ambiente():
     assert len(set(databases.values())) == len(databases), f"test e prod condividono il Data Lake: {databases}"
 
 
+def test_export_distinto_per_ambiente():
+    targets = {env: _env_file(env).get("export") for env in render.envs()}
+    if not any(targets.values()):
+        pytest.skip("data product senza job export")
+    assert all(targets.values()), f"la sezione export va in tutti gli ambienti: {sorted(targets)}"
+    for env, target in targets.items():
+        assert set(target) == {"account", "container", "credential"}, f"{env}.yaml: export {target}"
+    pairs = {(target["account"], target["container"]) for target in targets.values()}
+    assert len(pairs) == len(targets), f"test sovrascriverebbe i Parquet di prod: {targets}"
+
+
 def test_traduzione_della_definizione():
     spec = {
         "name": "dp-x-y-test",

@@ -25,6 +25,7 @@ ANSWERS = {
     "MODULES": "data,quality",
     "JOB": "kpi",
     "SPARK": "s",
+    "EXPORT": "n",
     "QUALITY_LAYER": "gold",
     "CONTRACTS_REF": "dqf-update-pagopa-dc",
     "INPUTS": "raw_positions",
@@ -43,9 +44,15 @@ def clone(tmp_path):
     return root
 
 
-@pytest.mark.parametrize(("modules", "spark"), [("data,quality", "s"), ("data", "n"), ("quality", "s")])
-def test_setup_produce_un_data_product_valido(clone, modules, spark):
-    choices = setup.collect({**ANSWERS, "MODULES": modules, "SPARK": spark}, clone, ask=_no_questions)
+@pytest.mark.parametrize(
+    ("modules", "spark", "export"),
+    [("data,quality", "s", "n"), ("data", "n", "s"), ("quality", "s", "n"), ("data,quality", "s", "s")],
+)
+def test_setup_produce_un_data_product_valido(clone, modules, spark, export):
+    answers = {**ANSWERS, "MODULES": modules, "SPARK": spark, "EXPORT": export}
+    choices = setup.collect(answers, clone, ask=_no_questions)
+    exported = "data" in modules and export == "s"
+    assert choices.export == exported, "il job export c'è solo con il Modulo Dati"
     changes = setup.apply(choices, clone)
     tests = [sys.executable, "-m", "pytest", "dp-setup-utils/tests", "-q", "-p", "no:cacheprovider"]
     result = subprocess.run(tests, cwd=clone, capture_output=True, text=True)
@@ -62,24 +69,36 @@ def test_setup_produce_un_data_product_valido(clone, modules, spark):
     report = setup.report(changes)
     assert all(path in report for _, path, _ in changes)
     assert ("Configura la quality" in setup.next_steps(clone)) == ("quality" in modules)
+    assert ("Configura l'export" in setup.next_steps(clone)) == exported
+    envs = [yaml.safe_load((clone / "envs" / f"{env}.yaml").read_text(encoding="utf-8")) for env in ("test", "prod")]
+    assert all(("export" in env) == exported for env in envs), "la destinazione dell'export solo con il job export"
     if "data" in modules:
-        assert setup._jobs(clone) == ["kpi"]
+        dag = (clone / "data" / "dags" / "dag_pipeline.py").read_text(encoding="utf-8")
+        assert dag.endswith('    job("kpi") >> job("export")\n' if exported else '    job("kpi")\n')
+        assert setup._jobs(clone) == (["export", "kpi"] if exported else ["kpi"])
         detail = f"struttura di data/jobs/ingestion/, {setup._example(spark == 's')}"
         assert ("creato", "data/jobs/kpi/", detail) in changes
         entrypoint = clone / "data" / "jobs" / "kpi" / "src" / "kpi" / "entrypoints" / "run_kpi.py"
         code = entrypoint.read_text(encoding="utf-8")
         assert ("SparkSession" in code) == (spark == "s")
         assert ('    "raw_positions",\n' in code) == (spark == "s"), "legge le input port scelte"
-        assert {path for action, path, _ in changes if action == "cancellato" and path.startswith("data/jobs/")} == {
-            "data/jobs/deduplication/",
-            "data/jobs/ingestion/",
-        }
+        deleted = {path for action, path, _ in changes if action == "cancellato" and path.startswith("data/jobs/")}
+        assert deleted == {"data/jobs/deduplication/", "data/jobs/ingestion/"} | (
+            set() if exported else {"data/jobs/export/"}
+        )
         tables = sorted(path.name for path in (clone / "data" / "ddl" / "tables").glob("*.sql"))
         assert tables == ["V001__create_kpi_positions.sql", "V002__create_kpi_daily.sql"]
         job_tests = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
         env = {**os.environ, "PYTHONPATH": "src"}
-        result = subprocess.run(job_tests, cwd=clone / "data" / "jobs" / "kpi", env=env, capture_output=True, text=True)
-        assert result.returncode == 0, result.stdout[-4000:]
+        for job in setup._jobs(clone):
+            folder = clone / "data" / "jobs" / job
+            result = subprocess.run(job_tests, cwd=folder, env=env, capture_output=True, text=True)
+            assert result.returncode == 0, result.stdout[-4000:]
+        if exported:
+            code = (clone / "data" / "jobs" / "export" / "src" / "export" / "entrypoints" / "run_export.py").read_text(
+                encoding="utf-8"
+            )
+            assert 'TABLES = (\n    ("kpi_positions", None),\n    ("kpi_daily", None),\n)\n' in code
     else:
         assert not (clone / "data").exists()
     if "quality" in modules:
@@ -115,6 +134,7 @@ def test_default(clone):
     choices = setup.collect({}, clone, ask=ask)
     assert (choices.modules, choices.job, choices.quality_layer, choices.inputs) == (setup.MODULES, "kpi", "silver", ())
     assert choices.spark, "di default il primo job legge le input port con Spark"
+    assert not choices.export, "di default niente export: vuole uno storage account su Azure"
     assert choices.outputs == (("kpi", "src/data/pagopa/gpd/dc-gpd-kpi.yaml"),)
 
 
@@ -166,6 +186,8 @@ def test_branch_dei_contratti_resta_una_stringa():
         ("OWNER", "pagopa", "@"),
         ("MODULES", "dati", "moduli"),
         ("JOB", "json", "modulo Python"),
+        ("JOB", "export", "job di export"),
+        ("EXPORT", "forse", "s o n"),
         ("SPARK", "forse", "s o n"),
         ("CONTRACTS_REF", "main..dev", "branch"),
         ("CONTRACTS_REF", "-main", "branch"),
@@ -182,7 +204,7 @@ def test_yes_usa_i_default(clone):
     minimal = {key: ANSWERS[key] for key in ("DOMAIN", "USE_CASE", "DESCRIPTION", "OWNER", "OUTPUTS")}
     choices = setup.collect({**minimal, "YES": "1"}, clone, ask=_no_questions)
     assert (choices.modules, choices.job, choices.quality_layer, choices.inputs) == (setup.MODULES, "kpi", "silver", ())
-    assert choices.spark and choices.contracts_ref == "main"
+    assert choices.spark and not choices.export and choices.contracts_ref == "main"
     for missing in ("OWNER", "OUTPUTS"):
         incomplete = {key: value for key, value in minimal.items() if key != missing}
         with pytest.raises(ValueError, match=f"manca {missing}"):
@@ -219,13 +241,14 @@ def test_si_annulla_per_rifarlo(clone):
     listed = setup.pending_text(setup.pending(clone)).splitlines()
     assert [line.split() for line in listed if "data/jobs/" in line] == [
         ["cancellato", "data/jobs/deduplication/"],
+        ["cancellato", "data/jobs/export/"],
         ["cancellato", "data/jobs/ingestion/"],
         ["creato", "data/jobs/kpi/"],
     ]
     assert ["modificato", "data-product.yaml"] in [line.split() for line in listed]
     assert setup.undo(clone) == ["kpi"]
     assert setup.pending(clone) == []
-    assert setup._jobs(clone) == ["deduplication", "ingestion"]
+    assert setup._jobs(clone) == ["deduplication", "export", "ingestion"]
     assert "dp-demo-blueprint" in (clone / "data-product.yaml").read_text(encoding="utf-8")
 
 

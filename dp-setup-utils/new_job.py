@@ -25,6 +25,8 @@ IGNORED = ("*.egg-info", "__pycache__", ".pytest_cache", "build", "dist", ".cove
 BUILD_ARTIFACTS = shutil.ignore_patterns(*IGNORED)
 YES, NO = ("s", "si", "sì", "y", "yes", "1", "true"), ("n", "no", "0", "false")
 SPARK_QUESTION = "Partire da un job che apre una sessione Spark, legge le tabelle delle input port e le stampa?"
+# Il job della blueprint che esporta tabelle su Azure: ha argomenti e credential sue, quindi non è un modello.
+EXPORT_JOB = "export"
 
 
 def yes_no(raw: str) -> bool:
@@ -187,6 +189,8 @@ def new_job(name: str, source: str, jobs_dir: Path, spark: bool = True, inputs: 
     if not IDENTIFIER.match(name):
         raise ValueError(f"{name}: è anche il nome del package, quindi minuscole, cifre e _, e prima una lettera")
     src, dst = jobs_dir / source, jobs_dir / name
+    if source == EXPORT_JOB:
+        raise ValueError(f"{source}: è il job di export, con argomenti suoi: parti da un altro job con FROM=<job>")
     if not src.is_dir():
         raise ValueError(f"{source}: non c'è in data/jobs/, indica il job da cui partire con FROM=<job>")
     if dst.exists():

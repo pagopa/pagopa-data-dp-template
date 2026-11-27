@@ -194,6 +194,18 @@ def test_prerequisiti(env, cde, monkeypatch):
         assert checks[f"job del dq-framework {ctx['quality']['dqJob']}"] == cde_setup.OK
 
 
+def test_prerequisiti_dell_export(env, cde):
+    export = render.context(env)["env"].get("export")
+    if not export:
+        pytest.skip("data product senza job export")
+    _, missing = cde
+    missing.add(export["credential"])
+    checks = {label: status for status, label, *_ in cde_setup.prerequisites(env)}
+    assert checks[f"workload credential {export['credential']}"] == cde_setup.MISSING, "dalla definizione del job"
+    container = f"container {export['container']} nello storage account {export['account']}"
+    assert checks[container] == cde_setup.CHECK, "il container sta su Azure: la CLI cde non lo vede"
+
+
 def test_solo_ok_se_non_manca_nulla(monkeypatch, capsys):
     pool = (cde_setup.CHECK, "pool Airflow dq", "in Airflow")
     checks = {

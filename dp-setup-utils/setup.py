@@ -32,6 +32,7 @@ KEYS = (
     "MODULES",
     "JOB",
     "SPARK",
+    "EXPORT",
     "QUALITY_LAYER",
     "CONTRACTS_REF",
     "INPUTS",
@@ -45,6 +46,8 @@ OWNER = re.compile(r"^@[\w.-]+(/[\w.-]+)?$")
 CONTRACT = re.compile(r"^[\w./-]+\.ya?ml$")
 REF = re.compile(r"^\w(?:[\w.-]|/(?!/))*(?<![./])$")
 GIT_STATUS = {"M": "modificato", "A": "creato", "?": "creato", "D": "cancellato", "R": "rinominato"}
+EXPORT_JOB = new_job.EXPORT_JOB
+EXPORT_QUESTION = "Tenere il job export, che copia le output port su Azure Blob Storage dopo gli altri job?"
 
 Ask = Callable[[str, str, Callable[[str], object]], object]
 
@@ -58,6 +61,7 @@ class Choices:
     modules: tuple[str, ...]
     job: str | None
     spark: bool
+    export: bool
     quality_layer: str | None
     contracts_ref: str | None
     inputs: tuple[tuple[str, str], ...]
@@ -107,6 +111,8 @@ def _job(examples: list[str]) -> Callable[[str], str]:
     def parse(raw: str) -> str:
         if not IDENTIFIER.match(raw):
             raise ValueError(f"{raw or 'valore vuoto'}: il job è anche un package Python, quindi minuscole, cifre e _")
+        if raw == EXPORT_JOB:
+            raise ValueError(f"{raw}: è il nome del job di export della blueprint, scegline un altro")
         if raw not in examples and importlib.util.find_spec(raw) is not None:
             raise ValueError(f"{raw}: c'è già un modulo Python con questo nome, che il package del job nasconderebbe")
         return raw
@@ -214,11 +220,12 @@ def collect(answers: dict[str, str], root: Path, ask: Ask = _ask) -> Choices:
     modules_question = "Modulo: data, quality (o tutti e due); separati da virgola"
     modules = value("MODULES", modules_question, ",".join(MODULES), _modules)
     job = quality_layer = contracts_ref = None
-    spark = False
+    spark = export = False
     if "data" in modules:
         section("Modulo Dati: si parte inizializzando un job")
         job = value("JOB", "Nome del primo job", use_case.replace("-", "_"), _job(_jobs(root)))
         spark = value("SPARK", f"{new_job.SPARK_QUESTION} (s/n)", "s", new_job.yes_no)
+        export = value("EXPORT", f"{EXPORT_QUESTION} (s/n)", "n", new_job.yes_no)
     if "quality" in modules:
         section("Modulo Quality: le informazioni per le sue tabelle")
         quality_question = f"Layer della quality (dlLayer), nel nome delle sue tabelle: <dlLayer>_dqf_{domain}_results"
@@ -229,7 +236,7 @@ def collect(answers: dict[str, str], root: Path, ask: Ask = _ask) -> Choices:
     inputs = ports("INPUTS", "input", required=False)
     outputs = ports("OUTPUTS", "output", required=True)
     return Choices(
-        domain, use_case, description, owner, modules, job, spark, quality_layer, contracts_ref, inputs, outputs
+        domain, use_case, description, owner, modules, job, spark, export, quality_layer, contracts_ref, inputs, outputs
     )
 
 
@@ -247,6 +254,7 @@ def summary(choices: Choices) -> str:
     if choices.job:
         rows.append(("primo job", choices.job))
         rows.append(("esempio del job", _example(choices.spark)))
+        rows.append(("job export", "sì, verso Azure Blob Storage" if choices.export else "no"))
     if choices.quality_layer:
         rows.append(("layer della quality", choices.quality_layer))
         rows.append(("branch dei contratti", choices.contracts_ref))
@@ -340,6 +348,19 @@ def _quality(text: str, layer: str, ref: str) -> str:
     return text
 
 
+def _export_tables(text: str, tables: list[str]) -> str:
+    listed = "".join(f'    ("{table}", None),\n' for table in tables)
+    tuple_ = re.compile(r"^TABLES = \(\n(?:    .*\n)*\)\n", re.MULTILINE)
+    text, count = tuple_.subn(lambda _: f"TABLES = (\n{listed})\n", text)
+    if not count:
+        raise ValueError(f"il job {EXPORT_JOB} non ha TABLES: mettici tu le tabelle da esportare")
+    return text
+
+
+def _without_export(text: str) -> str:
+    return re.sub(r"\n(?:#.*\n)*export:\n(?:  .*\n)*", "", text)
+
+
 def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
@@ -353,7 +374,7 @@ def _check_blueprint(root: Path) -> dict:
 
 def apply(choices: Choices, root: Path) -> list[tuple[str, str, str]]:
     old = _check_blueprint(root)
-    examples = _jobs(root)
+    examples = [job for job in _jobs(root) if job != EXPORT_JOB]
     changes: list[tuple[str, str, str]] = []
     _write(root / "data-product.yaml", _descriptor(choices))
     changes.append(("modificato", "data-product.yaml", "identità, moduli e porte"))
@@ -378,13 +399,22 @@ def apply(choices: Choices, root: Path) -> list[tuple[str, str, str]]:
             if job != choices.job:
                 shutil.rmtree(jobs_dir / job)
                 changes.append(("cancellato", f"data/jobs/{job}/", "job di esempio"))
+        export = jobs_dir / EXPORT_JOB
+        if choices.export:
+            entrypoint = export / "src" / EXPORT_JOB / "entrypoints" / f"run_{EXPORT_JOB}.py"
+            tables = [name for name, _ in choices.outputs]
+            _write(entrypoint, _export_tables(entrypoint.read_text(encoding="utf-8"), tables))
+            changes.append(("modificato", f"data/jobs/{EXPORT_JOB}/", f"esporta {', '.join(tables)}"))
+        elif export.is_dir():
+            shutil.rmtree(export)
+            changes.append(("cancellato", f"data/jobs/{EXPORT_JOB}/", "job export"))
         dag = root / "data" / "dags" / "dag_pipeline.py"
-        task = rf'\g<1>    job("{choices.job}")\n'
-        text, count = re.subn(r"(\) as dag:\n)(?:    .*\n)+\Z", task, dag.read_text(encoding="utf-8"))
+        tasks = f'job("{choices.job}")' + (f' >> job("{EXPORT_JOB}")' if choices.export else "")
+        text, count = re.subn(r"(\) as dag:\n)(?:    .*\n)+\Z", rf"\g<1>    {tasks}\n", dag.read_text(encoding="utf-8"))
         if not count:
-            raise ValueError(f"{dag.name} non è quello della blueprint: metti tu job(\"{choices.job}\") nel DAG")
+            raise ValueError(f"{dag.name} non è quello della blueprint: metti tu {tasks} nel DAG")
         _write(dag, text)
-        changes.append(("modificato", "data/dags/dag_pipeline.py", f'un solo task, job("{choices.job}")'))
+        changes.append(("modificato", "data/dags/dag_pipeline.py", tasks))
         tables = root / "data" / "ddl" / "tables"
         for path in sorted(tables.glob("*.sql")):
             path.unlink()
@@ -396,6 +426,12 @@ def apply(choices: Choices, root: Path) -> list[tuple[str, str, str]]:
     else:
         shutil.rmtree(root / "data")
         changes.append(("cancellato", "data/", "Modulo Dati"))
+    if not choices.export:
+        for path in sorted((root / "envs").glob("*.yaml")):
+            text = path.read_text(encoding="utf-8")
+            if (cleaned := _without_export(text)) != text:
+                _write(path, cleaned)
+                changes.append(("modificato", f"envs/{path.name}", "senza la destinazione dell'export"))
     if "quality" in choices.modules:
         for path in sorted((root / "quality" / "config").glob("*.yaml")):
             _write(path, _quality(path.read_text(encoding="utf-8"), choices.quality_layer, choices.contracts_ref))
@@ -470,7 +506,8 @@ def _setup_uncommitted(root: Path) -> bool:
 def next_steps(root: Path) -> str:
     ready = yaml.safe_load((root / "data-product.yaml").read_text(encoding="utf-8"))["name"] != BLUEPRINT
     data, quality = (root / "data").is_dir(), (root / "quality").is_dir()
-    jobs = _jobs(root)
+    jobs = [job for job in _jobs(root) if job != EXPORT_JOB]
+    export = (root / "data" / "jobs" / EXPORT_JOB).is_dir()
     job = jobs[0] if ready and len(jobs) == 1 else "<job>"
     command, manual = "Comando", "A mano"
     steps: list[tuple[bool, str, str, tuple[tuple[str, str], ...]]] = []
@@ -495,6 +532,10 @@ def next_steps(root: Path) -> str:
         step(False, "Prova un job in locale", what, (command, f'make run-dev JOB={job} ARGS="--from <AAAA-MM-GG>"'))
         what = "Il nome e le colonne delle tabelle, come nei contratti, e quando deve girare la pipeline."
         step(True, "Completa DDL e schedule", what, (command, "make render ENV=test elenca i TODO che mancano"))
+    if export:
+        what = "Storage account, container e credential con il SAS token, per ambiente, e le tabelle da esportare."
+        where = f"la sezione export di envs/test.yaml e prod.yaml, TABLES in data/jobs/{EXPORT_JOB}/src/{EXPORT_JOB}/"
+        step(True, "Configura l'export", what, (manual, f"{where}entrypoints/run_{EXPORT_JOB}.py"))
     if quality:
         what = (
             "Sposta lo schedule per non sovrapporti agli altri data product; "
@@ -611,7 +652,7 @@ def main() -> None:
     if not confirmed:
         sys.exit(_left(undone))
     changes = apply(choices, ROOT)
-    _uninstall([job for job in examples if job != choices.job])
+    _uninstall([job for job in examples if not (ROOT / "data" / "jobs" / job).is_dir()])
     if choices.job and _pip("install", "-q", "-e", f"data/jobs/{choices.job}[dev]") != 0:
         print(f"installazione di {choices.job} non riuscita: rilanciala con make install")
     print(f"\n{report(changes)}\n\n{choices.name} è pronto.\n\n{next_steps(ROOT)}")

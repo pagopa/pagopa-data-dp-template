@@ -1,0 +1,26 @@
+name: ${dp.name}-${job.name}-${env.name}
+type: spark
+applicationFile: launcher.py
+pyFiles:
+  - ${build.wheel}
+mountResources:
+  - ${dp.name}-${job.name}-${env.name}
+env:
+  ENV: ${env.name}
+# Solo la credential con il SAS token: il job non usa le altre di envs/<env>.yaml.
+workloadCredentials:
+  - ${env.export.credential}
+args:
+  - --database=${env.databases.data}
+  - --input-database=${env.databases.inputs}
+  - --account=${env.export.account}
+  - --container=${env.export.container}
+  - --credential=${env.export.credential}
+  - --prefix=${dp.name}
+# Ogni tabella passa per intero dal driver: è lui che serve memoria.
+sizing:
+  driverCores: 1
+  driverMemory: 4g
+  executorCores: 1
+  executorMemory: 2g
+  maxExecutors: 2
